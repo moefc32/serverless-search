@@ -29,7 +29,7 @@ export default {
         }
 
         switch (request.method) {
-            case 'GET':
+            case 'POST':
                 try {
                     const gcse_cx = env.CONFIG_GCSE_CX;
                     const gcse_key = env.CONFIG_GCSE_KEY;
