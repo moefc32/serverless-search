@@ -1,7 +1,8 @@
 const application = 'Mfc API';
-const contentTypeJson = {
-    'Content-Type': 'application/json',
-};
+const cache = caches.default;
+const cacheDuration = 60 * 60 * 24 * 3;
+const cacheControl = { 'Cache-Control': `public, max-age=${cacheDuration}` };
+const contentTypeJson = { 'Content-Type': 'application/json' };
 
 async function apiFetch(url, options = {}) {
     const defaultHeaders = {
@@ -16,21 +17,37 @@ async function apiFetch(url, options = {}) {
 export default {
     async fetch(request, env, ctx) {
         const { searchParams } = new URL(request.url);
-        const searchQuery = searchParams.get('q');
-
-        if (!searchQuery) {
-            return new Response(JSON.stringify({
-                application,
-                message: 'Missing search query string!'
-            }), {
-                status: 400,
-                headers: contentTypeJson,
-            });
-        }
+        const rawQuery = searchParams.get('q') || '';
+        const searchQuery = rawQuery
+            .trim()
+            .toLowerCase()
+            .replace(/[\x00-\x1F\x7F]/g, '')
+            .replace(/<\/?[^>]+(>|$)/g, '');
 
         switch (request.method) {
             case 'POST':
+                if (!searchQuery) {
+                    return new Response(JSON.stringify({
+                        application,
+                        message: 'Missing search query string!'
+                    }), {
+                        status: 400,
+                        headers: contentTypeJson,
+                    });
+                }
+
                 try {
+                    const cacheKey = new Request(
+                        new URL(request.url).origin + `?q=${searchQuery}`, request);
+                    const cachedResponse = await cache.match(cacheKey);
+
+                    if (cachedResponse) {
+                        const age = cachedResponse.headers.get('CF-Cache-Age');
+                        if (age !== null && parseInt(age) < cacheDuration) {
+                            return cachedResponse;
+                        }
+                    }
+
                     const gcse_cx = env.CONFIG_GCSE_CX;
                     const gcse_key = env.CONFIG_GCSE_KEY;
 
@@ -47,9 +64,9 @@ export default {
                     const response = await apiFetch(
                         `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(searchQuery)}&cx=${gcse_cx}&key=${gcse_key}&num=10`);
 
-                    if (!response.ok) {
+                    if (!response?.ok) {
                         const text = await response.text();
-                        throw new Error(`GCSE API returned ${response.status}: ${text}`);
+                        throw new Error(`GCSE API failed: ${text}`);
                     }
 
                     const data = await response.json();
@@ -73,13 +90,19 @@ export default {
                         }
                     });
 
-                    return new Response(JSON.stringify({
+                    const cachedData = new Response(JSON.stringify({
                         application,
                         message: 'Fetch data success.',
                         data: result,
                     }), {
-                        headers: contentTypeJson,
+                        headers: {
+                            ...contentTypeJson,
+                            ...cacheControl,
+                        }
                     });
+
+                    ctx.waitUntil(cache.put(cacheKey, cachedData.clone()));
+                    return cachedData;
                 } catch (e) {
                     return new Response(JSON.stringify({
                         application,
@@ -89,9 +112,6 @@ export default {
                         headers: contentTypeJson,
                     });
                 }
-
-            case 'DELETE':
-                return new Response(null, { status: 204 });
 
             default:
                 return new Response(JSON.stringify({
