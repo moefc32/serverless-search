@@ -1,8 +1,9 @@
-const application = 'Mfc API';
+import corsHeaders from './corsHeaders.js';
+import responseHelper from './responseHelper.js';
+
 const cache = caches.default;
 const cacheDuration = 60 * 60 * 24 * 3;
 const cacheControl = { 'Cache-Control': `public, max-age=${cacheDuration}` };
-const contentTypeJson = { 'Content-Type': 'application/json' };
 
 async function apiFetch(url, options = {}) {
     const defaultHeaders = {
@@ -25,15 +26,14 @@ export default {
             .replace(/<\/?[^>]+(>|$)/g, '');
 
         switch (request.method) {
+            case 'OPTIONS':
+                return new Response(null, { headers: corsHeaders });
+
             case 'POST':
                 if (!searchQuery) {
-                    return new Response(JSON.stringify({
-                        application,
+                    return responseHelper({
                         message: 'Missing search query string!'
-                    }), {
-                        status: 400,
-                        headers: contentTypeJson,
-                    });
+                    }, 400);
                 }
 
                 try {
@@ -52,13 +52,9 @@ export default {
                     const gcse_key = env.CONFIG_GCSE_KEY;
 
                     if (!gcse_cx || !gcse_key) {
-                        return new Response(JSON.stringify({
-                            application,
+                        return responseHelper({
                             message: 'Missing environment variable(s)!',
-                        }), {
-                            status: 500,
-                            headers: contentTypeJson,
-                        });
+                        }, 500);
                     }
 
                     const response = await apiFetch(
@@ -72,13 +68,8 @@ export default {
                     const data = await response.json();
 
                     if (!data.items) {
-                        return new Response(JSON.stringify({
-                            application,
+                        return responseHelper({
                             message: 'No search result found.',
-                            data: [],
-                        }), {
-                            status: 200,
-                            headers: contentTypeJson,
                         });
                     }
 
@@ -90,37 +81,25 @@ export default {
                         }
                     });
 
-                    const cachedData = new Response(JSON.stringify({
-                        application,
+                    const cachedData = responseHelper({
                         message: 'Fetch data success.',
                         data: result,
-                    }), {
-                        headers: {
-                            ...contentTypeJson,
-                            ...cacheControl,
-                        }
+                    }, 200, {
+                        ...cacheControl,
                     });
 
                     ctx.waitUntil(cache.put(cacheKey, cachedData.clone()));
                     return cachedData;
                 } catch (e) {
-                    return new Response(JSON.stringify({
-                        application,
+                    return responseHelper({
                         message: e.message,
-                    }), {
-                        status: 500,
-                        headers: contentTypeJson,
-                    });
+                    }, 500);
                 }
 
             default:
-                return new Response(JSON.stringify({
-                    application,
+                return responseHelper({
                     message: 'Method not allowed!'
-                }), {
-                    status: 405,
-                    headers: contentTypeJson,
-                });
+                }, 405);
         }
     },
 };
